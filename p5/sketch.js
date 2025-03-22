@@ -1,113 +1,173 @@
-let port; // 시리얼 포트
-let connectBtn; // 연결 버튼
-let redSlider, yellowSlider, greenSlider, brightnessSlider;
-let redState = 0, yellowState = 0, greenState = 0;
-let modeIndicator = "NORMAL"; // 초기 모드
-let brightness = 0; // LED 밝기 값
+let port;
+let isPortOpen = false;
+let receivedBuffer = ""; // 버퍼를 사용해 데이터 밀림 방지
+
+let mode = "NORMAL";
+let brightness = 255;
+let redTime = 2000, yellowTime = 500, greenTime = 2000;
+let currentColor = "off";
+let currentColor2 = "off";
+let currentColor3 = "off";
+
+let redSlider, yellowSlider, greenSlider;
 
 function setup() {
-
-  //캔버스 크기 조정
-  createCanvas(520, 400);
-  background(220);
+  createCanvas(800, 600);
+  background(240);
 
   port = createSerial();
   let usedPorts = usedSerialPorts();
+
   if (usedPorts.length > 0) {
     port.open(usedPorts[0], 9600);
+    console.log("🔗 Connected to:", usedPorts[0]);
+    isPortOpen = true;
+  } else {
+    console.log("❌ No available serial ports.");
   }
 
+  redSlider = createSlider(500, 5000, redTime, 500);
+  redSlider.position(50, 350);
+  redSlider.input(updateRedTime);
 
-  connectBtn = createButton("Connect to Arduino");
-  connectBtn.position(350, 60);
-  connectBtn.mousePressed(connectBtnClick);
+  yellowSlider = createSlider(500, 5000, yellowTime, 500);
+  yellowSlider.position(50, 380);
+  yellowSlider.input(updateYellowTime);
 
-  //RED,YELLOW,GREEN 시간 조절 슬라이더
-  redSlider = createSlider(500, 5000, 2000, 10);
-  redSlider.position(10, 40);
-  redSlider.mouseReleased(() => changeSignalTime("R", redSlider.value()));
+  greenSlider = createSlider(500, 5000, greenTime, 500);
+  greenSlider.position(50, 410);
+  greenSlider.input(updateGreenTime);
 
-  yellowSlider = createSlider(500, 5000, 500, 10);
-  yellowSlider.position(10, 70);
-  yellowSlider.mouseReleased(() => changeSignalTime("Y", yellowSlider.value()));
-
-  greenSlider = createSlider(500, 5000, 2000, 10);
-  greenSlider.position(10, 100);
-  greenSlider.mouseReleased(() => changeSignalTime("G", greenSlider.value()));
-
-  //밝기 조절 슬라이더 추가 (0 ~ 255)
-  brightnessSlider = createSlider(0, 255, 100, 5);
-  brightnessSlider.position(10, 130);
-
-  textSize(18);
-  fill(0);
+  frameRate(30);
 }
 
 function draw() {
-  let n = port.available();
-  if (n > 0) {
-    let str = port.readUntil("\n");
-    console.log("Received:", str); //데이터 확인용 로그 추가
+  background(240);
 
-    //LED 상태 정보 파싱
-    let redMatch = str.match(/RED:(\d+)/);
-    let yellowMatch = str.match(/YELLOW:(\d+)/);
-    let greenMatch = str.match(/GREEN:(\d+)/);
-    let modeMatch = str.match(/MODE:([A-Z]+)/);
-    let brightnessMatch = str.match(/밝기:(\d+)/);
+  // 🔹 시리얼 데이터 수신 처리
+  readSerialData();
 
-    if (redMatch) redState = parseInt(redMatch[1]);
-    if (yellowMatch) yellowState = parseInt(yellowMatch[1]);
-    if (greenMatch) greenState = parseInt(greenMatch[1]);
-    if (modeMatch) modeIndicator = modeMatch[1];
-    if (brightnessMatch) {
-      brightness = parseInt(brightnessMatch[1]); 
-      brightnessSlider.value(brightness); //슬라이더도 같이 움직이게 설정
+  drawIndicators();
+  drawColorCircle();
+  drawBrightnessGauge();
+  drawSliders();
+}
+
+// 🔹 시리얼 데이터 읽기 (버퍼를 활용하여 데이터 밀림 방지)
+function readSerialData() {
+  if (isPortOpen && port.available()) {
+    let incomingData = port.read();
+    if (incomingData) {
+      receivedBuffer += incomingData; // 🔹 데이터를 버퍼에 추가
+
+      // **완전한 줄이 들어왔을 때만 처리**
+      let lines = receivedBuffer.split("\n");
+      while (lines.length > 1) { // 완전한 줄이 있을 경우
+        let line = lines.shift().trim(); // 첫 번째 줄을 가져와 처리
+        processSerialData(line);
+      }
+      receivedBuffer = lines.join("\n"); // 처리되지 않은 데이터는 다시 버퍼에 저장
     }
+  }
+}
 
-    console.log(`LED 상태: RED=${redState}, YELLOW=${yellowState}, GREEN=${greenState}, MODE=${modeIndicator}, 밝기=${brightness}`);
+// 🔹 개별 시리얼 데이터 처리 함수
+function processSerialData(data) {
+  if (data.startsWith("MODE:")) {
+    mode = data.substring(5);
+    console.log("📡 Mode changed to:", mode);
+  } else if (data.startsWith("BRIGHTNESS:")) {
+    let brightVal = parseInt(data.substring(11)); // 🔹 `int()` 대신 `parseInt()` 사용
+    if (!isNaN(brightVal)) {
+      brightness = brightVal; // 🔹 실시간 업데이트
+    }
+  } else if (data.startsWith("LED_STATE:")) {
+    let parts = data.split(":");
+    if (parts.length >= 4) {
+      currentColor = parts[1];
+      currentColor2 = parts[2];
+      currentColor3 = parts[3];
+      console.log("LED State Updated:", currentColor, currentColor2, currentColor3);
+    }
   }
 
-  background(220);
-  textSize(16);
-  text("RED 시간", 10, 45);
-  text("YELLOW 시간", 10, 75);
-  text("GREEN 시간", 10, 105);
-  text("밝기 조절", 10, 135);
+  console.log("Brightness:", brightness);
+}
 
-  //LED 색상 변경에 따라 원 색상 변경
-  let ledColor = color(100, 100, 100);
-  if (redState > 0) ledColor = color(255, 0, 0, brightness);
-  if (yellowState > 0) ledColor = color(255, 255, 0, brightness);
-  if (greenState > 0) ledColor = color(0, 255, 0, brightness);
+// 🔹 UI 요소 업데이트
+function drawIndicators() {
+  fill(255);
+  noStroke();
+  rect(50, 280, 200, 40);
+  fill(0);
+  textSize(20);
+  text("Mode: " + mode, 150, 300);
+}
 
+// 🔹 밝기 조절 게이지 (실시간 반영)
+function drawBrightnessGauge() {
+  fill(200);
+  rect(50, 200, 300, 30,10);
+
+  let gaugeWidth = map(brightness, 0, 255, 0, 300);
+  fill(200, 255, 180);
+  rect(50, 200, gaugeWidth, 30, 10);
   
-  //LED를 원으로 시각화화
-  fill(ledColor);
-  circle(200, 200, 50);
+  fill(0);
+  textSize(20);
+  text(brightness, brightness+70, 180);
+}
+
+// 🔹 신호등 색깔 변경
+function drawColorCircle() {
+  
+  if (currentColor === "R1") fill("red");
+  else fill(200);
+  circle(100, 100, 80);
+
+  if (currentColor2 === "Y1") fill("yellow");
+  else fill(200);
+  circle(250, 100, 80);
+
+  if (currentColor3 === "G1") fill("green");
+  else fill(200);
+  circle(400, 100, 80);
 
   fill(0);
   textSize(20);
-  text("Mode: " + modeIndicator, 10, 250);
-  text("밝기: " + brightness, 10, 280);
-
-  if (!port.opened()) {
-    connectBtn.html("Connect to Arduino");
-  } else {
-    connectBtn.html("Disconnect");
-  }
+  textAlign(CENTER, CENTER);
+  text("R", 100, 100);
+  text("Y", 250, 100);
+  text("G", 400, 100);
 }
 
-//신호등 시간 변경
-function changeSignalTime(color, value) {
-  port.write(color + ":" + value + "\n");
+function drawSliders() {
+  fill(0);
+  textSize(14);
+  text("Red Time: " + redTime + " ms", 100, 345);
+  text("Yellow Time: " + yellowTime + " ms", 100, 375);
+  text("Green Time: " + greenTime + " ms", 100, 405);
 }
 
-//시리얼 포트 연결/해제
-function connectBtnClick() {
-  if (!port.opened()) {
-    port.open(9600);
-  } else {
-    port.close();
+function updateRedTime() {
+  redTime = redSlider.value();
+  sendTrafficLightSettings();
+}
+
+function updateYellowTime() {
+  yellowTime = yellowSlider.value();
+  sendTrafficLightSettings();
+}
+
+function updateGreenTime() {
+  greenTime = greenSlider.value();
+  sendTrafficLightSettings();
+}
+
+function sendTrafficLightSettings() {
+  if (isPortOpen) {
+    let message = `TRAFFIC_LIGHT:${redTime}:${yellowTime}:${greenTime}`;
+    port.write(message);
+    console.log(message);
   }
 }

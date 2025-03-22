@@ -1,86 +1,76 @@
-#include <Arduino.h>
-#include <TaskScheduler.h>
-#include <PinChangeInterrupt.h>
+#include <Arduino.h>                     // 아두이노 기본 라이브러리 포함
+#include <TaskScheduler.h>              // Task 스케줄링을 위한 라이브러리 포함
+#include <PinChangeInterrupt.h>         // 핀 체인지 인터럽트를 위한 라이브러리 포함
 
-// -------------------------
-// 핀 설정
-// -------------------------
-#define LED_RED       11  
-#define LED_YELLOW    10  
-#define LED_GREEN     9
+// LED 핀 정의
+#define LED_RED       11                // 빨간 LED 핀
+#define LED_YELLOW    10                // 노란 LED 핀
+#define LED_GREEN     9                 // 초록 LED 핀
 
-#define BUTTON_EMERGENCY  7  
-#define BUTTON_BLINK      6  
-#define BUTTON_OFF        5  
+// 버튼 핀 정의
+#define BUTTON_EMERGENCY  7             // 긴급 모드 버튼
+#define BUTTON_BLINK      6             // 깜빡 모드 버튼
+#define BUTTON_OFF        5             // 끄기 모드 버튼
 
-#define POTENTIOMETER A0  
+// 포텐셔미터 아날로그 핀
+#define POTENTIOMETER A0                // 밝기 조절용 포텐셔미터 핀
 
-// -------------------------
-// 신호등 상태 및 모드 설정
-// -------------------------
+// LED 상태 정의 열거형
 enum LEDState {
   OFF, RED, YELLOW, GREEN, TOGGLE
 };
-volatile LEDState currentLEDState = OFF;
+volatile LEDState currentLEDState = OFF;  // 현재 점등된 LED 상태
 
+// 신호등 상태 정의 열거형
 enum TrafficState {
   RED_BLINK, YELLOW1_BLINK, GREEN_BLINK, GREEN_FLICKER, YELLOW2_BLINK
 };
-volatile TrafficState trafficState = RED_BLINK;
+volatile TrafficState trafficState = RED_BLINK;  // 현재 신호등 상태
 
-// -------------------------
-// 시간 설정 (밀리초)
-// -------------------------
-int TIME_RED = 2000;
-int TIME_YELLOW = 500;
-int TIME_GREEN = 2000;
-const unsigned int TIME_FLICKER = 1000 / 7;  
-const unsigned int TIME_BLINK = 500; // 깜빡 모드 토글 간격
+// 신호 시간 설정값 (밀리초 단위)
+int TIME_RED = 2000;                              // 빨간불 지속 시간
+int TIME_YELLOW = 500;                            // 노란불 지속 시간
+int TIME_GREEN = 2000;                            // 초록불 지속 시간
+const unsigned int TIME_FLICKER = 1000 / 7;       // 초록불 깜빡이는 시간 간격 (7Hz)
+const unsigned int TIME_BLINK = 500;              // 깜빡 모드 LED 토글 시간 간격
 
-// -------------------------
-// 모드 플래그
-// -------------------------
-volatile bool emergencyMode = false;
-volatile bool blinkMode = false;
-volatile bool offMode = false;
-volatile unsigned long lastInterruptTime = 0;
+// 모드 플래그 변수들
+volatile bool emergencyMode = false;              // 긴급 모드 상태
+volatile bool blinkMode = false;                  // 깜빡 모드 상태
+volatile bool offMode = false;                    // 끄기 모드 상태
+volatile unsigned long lastInterruptTime = 0;     // 버튼 인터럽트 디바운싱 처리용 변수
 
-// -------------------------
-// 함수 선언 (오류 방지용)
-// -------------------------
+// 함수 프로토타입 선언
 void updateTrafficLights();
 void blinkLEDs();
 void onEmergencyButtonPress();
 void onBlinkButtonPress();
 void onOffButtonPress();
 
-// -------------------------
-// TaskScheduler 설정
-// -------------------------
-Scheduler taskManager;
-Task taskTrafficUpdate(10, TASK_FOREVER, updateTrafficLights);
-Task blinkTask(TIME_BLINK, TASK_FOREVER, blinkLEDs);
+// TaskScheduler를 이용한 작업 관리
+Scheduler taskManager;                            // 작업 스케줄러 객체 생성
+Task taskTrafficUpdate(10, TASK_FOREVER, updateTrafficLights); // 신호등 상태 업데이트 작업
+Task blinkTask(TIME_BLINK, TASK_FOREVER, blinkLEDs);           // LED 깜빡임 작업
 
-// -------------------------
-// LED 제어 함수
-// -------------------------
+// LED에 밝기를 적용하여 점등하는 함수
 void setLED(int red, int yellow, int green) {
-  analogWrite(LED_RED, red);
-  analogWrite(LED_YELLOW, yellow);
-  analogWrite(LED_GREEN, green);
+  analogWrite(LED_RED, red);                      // 빨간 LED 밝기 설정
+  analogWrite(LED_YELLOW, yellow);                // 노란 LED 밝기 설정
+  analogWrite(LED_GREEN, green);                  // 초록 LED 밝기 설정
 }
-// 깜빡 모드 제어 함수
+
+// 깜빡 모드 동작 함수 (모든 LED가 주기적으로 깜빡임)
 void blinkLEDs() {
-  int potVal = analogRead(POTENTIOMETER);
-  int brightness = map(potVal, 0, 1023, 0, 255);
-  static bool toggleState = false;
-  toggleState = !toggleState;
+  int potVal = analogRead(POTENTIOMETER);         // 포텐셔미터 값을 읽어옴
+  int brightness = map(potVal, 0, 1023, 0, 255);   // 아날로그 값을 PWM 밝기로 변환
+  static bool toggleState = false;                // 깜빡 상태 토글 플래그
+  toggleState = !toggleState;                     // 상태 반전
 
   if (blinkMode) {
-    // 🔹 모든 LED가 깜빡이도록 설정
+    // 모든 LED를 토글 상태에 따라 켜거나 끔
     setLED(toggleState ? brightness : 0, toggleState ? brightness : 0, toggleState ? brightness : 0);
 
-    // 🔹 시리얼 출력에서 모든 LED의 상태를 반영
+    // 현재 상태를 시리얼 출력
     Serial.print("LED_STATE:");
     Serial.print("R");
     Serial.print(toggleState ? "1" : "0");
@@ -93,6 +83,7 @@ void blinkLEDs() {
   }
 }
 
+// 시리얼로 전달된 명령어 처리 함수
 void processSerialData(String data) {
   if (data.startsWith("TRAFFIC_LIGHT:")) {
     int firstColon = data.indexOf(':');
@@ -100,21 +91,21 @@ void processSerialData(String data) {
     int thirdColon = data.indexOf(':', secondColon + 1);
 
     if (firstColon != -1 && secondColon != -1 && thirdColon != -1) {
+      // 시리얼 명령어에서 시간값 추출
       TIME_RED = data.substring(firstColon + 1, secondColon).toInt();
       TIME_YELLOW = data.substring(secondColon + 1, thirdColon).toInt();
       TIME_GREEN = data.substring(thirdColon + 1).toInt();
     }
   }
 }
-// -------------------------
-// 신호등 상태 업데이트 함수
-// -------------------------
+
+// 신호등 상태에 따른 LED 제어 로직
 void updateTrafficLights() {
-  if (emergencyMode || blinkMode || offMode) return;
+  if (emergencyMode || blinkMode || offMode) return;  // 특수 모드일 경우 무시
 
   unsigned long now = millis();
-  static unsigned long stateStartTime = millis();
-  static int flickerCount = 0;
+  static unsigned long stateStartTime = millis();     // 상태 시작 시간 저장
+  static int flickerCount = 0;                        // 초록불 깜빡임 횟수 카운터
 
   switch (trafficState) {
     case RED_BLINK:
@@ -163,17 +154,15 @@ void updateTrafficLights() {
   }
 }
 
-// -------------------------
-// 인터럽트 콜백 함수
-// -------------------------
+// 버튼 인터럽트 처리 및 모드 전환 함수
 void handleButtonPress(int buttonPin, volatile bool *modeFlag, LEDState ledState) {
   unsigned long now = millis();
-  if (now - lastInterruptTime < 200) return; // 디바운싱
+  if (now - lastInterruptTime < 200) return; // 디바운싱 처리 (200ms 이내 무시)
 
   if (digitalRead(buttonPin) == LOW) {
-    *modeFlag = !(*modeFlag); // 모드 토글
+    *modeFlag = !(*modeFlag); // 플래그 상태 토글
 
-    if (*modeFlag) {  
+    if (*modeFlag) {  // 모드 진입
       emergencyMode = (buttonPin == BUTTON_EMERGENCY);
       blinkMode = (buttonPin == BUTTON_BLINK);
       offMode = (buttonPin == BUTTON_OFF);
@@ -193,7 +182,7 @@ void handleButtonPress(int buttonPin, volatile bool *modeFlag, LEDState ledState
         blinkTask.disable();
       }
     } 
-    else {
+    else { // 일반 모드 복귀
       Serial.println("MODE: normal");
       emergencyMode = blinkMode = offMode = false;
       blinkTask.disable();
@@ -201,59 +190,62 @@ void handleButtonPress(int buttonPin, volatile bool *modeFlag, LEDState ledState
     }
   }
 
-  lastInterruptTime = now;
+  lastInterruptTime = now; // 마지막 인터럽트 시간 업데이트
 }
 
-// -------------------------
-// 버튼 이벤트 핸들러
-// -------------------------
+// 버튼별 인터럽트 콜백 등록
 void onEmergencyButtonPress() { handleButtonPress(BUTTON_EMERGENCY, &emergencyMode, RED); }
 void onBlinkButtonPress() { handleButtonPress(BUTTON_BLINK, &blinkMode, TOGGLE); }
 void onOffButtonPress() { handleButtonPress(BUTTON_OFF, &offMode, OFF); }
 
-// -------------------------
-// Setup 함수
-// -------------------------
+// 설정 초기화 함수
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(9600);                            // 시리얼 통신 시작
 
+  // LED 핀 출력 설정
   pinMode(LED_RED, OUTPUT);
   pinMode(LED_YELLOW, OUTPUT);
   pinMode(LED_GREEN, OUTPUT);
+
+  // 버튼 핀 입력 풀업 설정
   pinMode(BUTTON_EMERGENCY, INPUT_PULLUP);
   pinMode(BUTTON_BLINK, INPUT_PULLUP);
   pinMode(BUTTON_OFF, INPUT_PULLUP);
 
+  // 버튼 인터럽트 핸들러 연결
   attachPCINT(digitalPinToPCINT(BUTTON_EMERGENCY), onEmergencyButtonPress, CHANGE);
   attachPCINT(digitalPinToPCINT(BUTTON_BLINK), onBlinkButtonPress, CHANGE);
   attachPCINT(digitalPinToPCINT(BUTTON_OFF), onOffButtonPress, CHANGE);
 
+  // TaskScheduler 초기화 및 작업 추가
   taskManager.init();
   taskManager.addTask(taskTrafficUpdate);
   taskManager.addTask(blinkTask);
   taskTrafficUpdate.enable();
 }
 
-// -------------------------
-// Loop 함수
-// -------------------------
-unsigned long lastSerialTime = 0;
-const unsigned long serialInterval = 100; // 500ms마다 출력
+unsigned long lastSerialTime = 0;                  // 마지막 시리얼 출력 시간 저장 변수
+const unsigned long serialInterval = 100;          // 시리얼 출력 간격 (100ms)
 
+// 메인 루프 함수
 void loop() {
-  int potVal = analogRead(POTENTIOMETER);
-  int brightness = map(potVal, 0, 1023, 0, 255);
+  int potVal = analogRead(POTENTIOMETER);          // 포텐셔미터 값 읽기
+  int brightness = map(potVal, 0, 1023, 0, 255);    // 밝기 값으로 변환
+
   if (Serial.available()) {
-    String receivedData = Serial.readStringUntil('\n'); // 시리얼 데이터 한 줄 읽기
-    processSerialData(receivedData); // 데이터 처리
+    String receivedData = Serial.readStringUntil('\n');  // 시리얼 데이터 읽기
+    processSerialData(receivedData);                      // 데이터 처리
   }
-  if (!blinkMode) {
+
+  if (!blinkMode) { // 깜빡 모드가 아닐 때만 수동 LED 점등
     analogWrite(LED_RED, (currentLEDState == RED) ? brightness : 0);
     analogWrite(LED_YELLOW, (currentLEDState == YELLOW) ? brightness : 0);
     analogWrite(LED_GREEN, (currentLEDState == GREEN) ? brightness : 0);
+
     if (millis() - lastSerialTime >= serialInterval) {
       lastSerialTime = millis();
-      
+
+      // 현재 LED 상태 및 밝기를 시리얼 출력
       Serial.print("LED_STATE:");
       Serial.print("R");
       Serial.print((currentLEDState == RED) ? "1" : "0");
@@ -266,8 +258,5 @@ void loop() {
     }
   }
 
-  taskManager.execute();
-
-  // 🔹 500ms마다 한 번만 시리얼 출력
-  
+  taskManager.execute();  // TaskScheduler 실행
 }
