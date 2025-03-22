@@ -8,12 +8,12 @@
 #define LED_GREEN     9                 // 초록 LED 핀
 
 // 버튼 핀 정의
-#define BUTTON_EMERGENCY  7             // 긴급 모드 버튼
-#define BUTTON_BLINK      6             // 깜빡 모드 버튼
-#define BUTTON_OFF        5             // 끄기 모드 버튼
+#define BUTTON_EMERGENCY  7             // emergency 모드 버튼
+#define BUTTON_BLINK      6             // blink 모드 버튼
+#define BUTTON_OFF        5             // off 모드 버튼
 
 // 포텐셔미터 아날로그 핀
-#define POTENTIOMETER A0                // 밝기 조절용 포텐셔미터 핀
+#define POTENTIOMETER A0                // 밝기 조절용 가변저항 핀
 
 // LED 상태 정의 열거형
 enum LEDState {
@@ -35,9 +35,9 @@ const unsigned int TIME_FLICKER = 1000 / 7;       // 초록불 깜빡이는 시�
 const unsigned int TIME_BLINK = 500;              // 깜빡 모드 LED 토글 시간 간격
 
 // 모드 플래그 변수들
-volatile bool emergencyMode = false;              // 긴급 모드 상태
-volatile bool blinkMode = false;                  // 깜빡 모드 상태
-volatile bool offMode = false;                    // 끄기 모드 상태
+volatile bool emergencyMode = false;              // emergency 모드 상태
+volatile bool blinkMode = false;                  // blink 모드 상태
+volatile bool offMode = false;                    // iff 모드 상태
 volatile unsigned long lastInterruptTime = 0;     // 버튼 인터럽트 디바운싱 처리용 변수
 
 // 함수 프로토타입 선언
@@ -61,9 +61,9 @@ void setLED(int red, int yellow, int green) {
 
 // 깜빡 모드 동작 함수 (모든 LED가 주기적으로 깜빡임)
 void blinkLEDs() {
-  int potVal = analogRead(POTENTIOMETER);         // 포텐셔미터 값을 읽어옴
+  int potVal = analogRead(POTENTIOMETER);         // 가변저항 값을 읽어옴
   int brightness = map(potVal, 0, 1023, 0, 255);   // 아날로그 값을 PWM 밝기로 변환
-  static bool toggleState = false;                // 깜빡 상태 토글 플래그
+  static bool toggleState = false;                // blink 상태 토글 플래그
   toggleState = !toggleState;                     // 상태 반전
 
   if (blinkMode) {
@@ -107,7 +107,7 @@ void updateTrafficLights() {
   static unsigned long stateStartTime = millis();     // 상태 시작 시간 저장
   static int flickerCount = 0;                        // 초록불 깜빡임 횟수 카운터
 
-  switch (trafficState) {
+  switch (trafficState) {  //기본 사이클 구조
     case RED_BLINK:
       currentLEDState = RED;
       if (now - stateStartTime >= TIME_RED) {
