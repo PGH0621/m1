@@ -31,12 +31,11 @@ volatile TrafficState trafficState = RED_BLINK;
 // -------------------------
 // 시간 설정 (밀리초)
 // -------------------------
-volatile unsigned int TIME_RED = 2000;
-volatile unsigned int TIME_YELLOW = 500;
-volatile unsigned int TIME_GREEN = 2000;
-
-volatile unsigned int TIME_FLICKER = 1000 / 7;  
-volatile unsigned int TIME_BLINK = 500; // 깜빡 모드 토글 간격
+int TIME_RED = 2000;
+int TIME_YELLOW = 500;
+int TIME_GREEN = 2000;
+const unsigned int TIME_FLICKER = 1000 / 7;  
+const unsigned int TIME_BLINK = 500; // 깜빡 모드 토글 간격
 
 // -------------------------
 // 모드 플래그
@@ -70,60 +69,48 @@ void setLED(int red, int yellow, int green) {
   analogWrite(LED_YELLOW, yellow);
   analogWrite(LED_GREEN, green);
 }
-
 // 깜빡 모드 제어 함수
 void blinkLEDs() {
   int potVal = analogRead(POTENTIOMETER);
   int brightness = map(potVal, 0, 1023, 0, 255);
   static bool toggleState = false;
   toggleState = !toggleState;
-  setLED(toggleState ? brightness: 0, toggleState ? brightness: 0, toggleState ? brightness: 0);
-}
 
-// LED 상태 업데이트
-void updateLEDState() {
-  switch (currentLEDState) {
-    case RED:
-      Serial.println("r");
-      setLED(255, 0, 0);
-      break;
-    case YELLOW:
-      Serial.println("y");
+  if (blinkMode) {
+    // 🔹 모든 LED가 깜빡이도록 설정
+    setLED(toggleState ? brightness : 0, toggleState ? brightness : 0, toggleState ? brightness : 0);
 
-      setLED(0, 255, 0);
-      break;
-    case GREEN:
-      Serial.println("g");
-
-      setLED(0, 0, 255);
-      break;
-    case TOGGLE:
-      Serial.println("HH");
-      blinkTask.enable();  // 깜빡 모드 실행
-      break;
-    case OFF:
-    default:
-      setLED(0, 0, 0);
-      break;
+    // 🔹 시리얼 출력에서 모든 LED의 상태를 반영
+    Serial.print("LED_STATE:");
+    Serial.print("R");
+    Serial.print(toggleState ? "1" : "0");
+    Serial.print(":Y");
+    Serial.print(toggleState ? "1" : "0");
+    Serial.print(":G");
+    Serial.println(toggleState ? "1" : "0");
+    Serial.print("BRIGHTNESS:");
+    Serial.println(brightness);
   }
 }
 
+void processSerialData(String data) {
+  if (data.startsWith("TRAFFIC_LIGHT:")) {
+    int firstColon = data.indexOf(':');
+    int secondColon = data.indexOf(':', firstColon + 1);
+    int thirdColon = data.indexOf(':', secondColon + 1);
+
+    if (firstColon != -1 && secondColon != -1 && thirdColon != -1) {
+      TIME_RED = data.substring(firstColon + 1, secondColon).toInt();
+      TIME_YELLOW = data.substring(secondColon + 1, thirdColon).toInt();
+      TIME_GREEN = data.substring(thirdColon + 1).toInt();
+    }
+  }
+}
 // -------------------------
 // 신호등 상태 업데이트 함수
 // -------------------------
 void updateTrafficLights() {
-  if (emergencyMode) {
-    currentLEDState = RED;
-    return;
-  }
-  if (blinkMode) {
-    currentLEDState = TOGGLE;
-    return;
-  }
-  if (offMode) {
-    currentLEDState = OFF;
-    return;
-  }
+  if (emergencyMode || blinkMode || offMode) return;
 
   unsigned long now = millis();
   static unsigned long stateStartTime = millis();
@@ -187,32 +174,30 @@ void handleButtonPress(int buttonPin, volatile bool *modeFlag, LEDState ledState
     *modeFlag = !(*modeFlag); // 모드 토글
 
     if (*modeFlag) {  
-      // 모드가 활성화될 때, 다른 모드는 비활성화
       emergencyMode = (buttonPin == BUTTON_EMERGENCY);
       blinkMode = (buttonPin == BUTTON_BLINK);
       offMode = (buttonPin == BUTTON_OFF);
 
       if (emergencyMode) {
         Serial.println("MODE: emergency");
-        currentLEDState = RED;  // 🚨 긴급 모드: 빨간불만 ON
-        blinkTask.disable();    // 깜빡임 비활성화
+        currentLEDState = RED;
+        blinkTask.disable();
       } 
       else if (blinkMode) {
         Serial.println("MODE: blink");
-        blinkTask.enable();  // 🔄 깜빡 모드 실행
+        blinkTask.enable();
       } 
       else if (offMode) {
-        Serial.println("MODE: ON/OFF");
-        currentLEDState = OFF;  // 모든 LED 끄기
-        blinkTask.disable();    // 깜빡임 비활성화
+        Serial.println("MODE: OFF");
+        currentLEDState = OFF;
+        blinkTask.disable();
       }
     } 
     else {
-      // 모든 모드를 해제하면 신호등 기본 상태로 복귀귀
       Serial.println("MODE: normal");
       emergencyMode = blinkMode = offMode = false;
-      blinkTask.disable();  // 깜빡임 비활성화
-      trafficState = RED_BLINK;  // 기본 신호등 상태로 돌아감
+      blinkTask.disable();
+      trafficState = RED_BLINK;
     }
   }
 
@@ -249,28 +234,40 @@ void setup() {
   taskTrafficUpdate.enable();
 }
 
-
 // -------------------------
 // Loop 함수
+// -------------------------
 unsigned long lastSerialTime = 0;
-const unsigned long serialInterval = 500; // 500ms마다 출력
+const unsigned long serialInterval = 100; // 500ms마다 출력
 
 void loop() {
   int potVal = analogRead(POTENTIOMETER);
   int brightness = map(potVal, 0, 1023, 0, 255);
-
-  // 🔹 500ms마다 한 번만 시리얼 출력
-  if (millis() - lastSerialTime >= serialInterval) {
-    lastSerialTime = millis();
-    Serial.print("Brightness: ");
-    Serial.println(brightness);
+  if (Serial.available()) {
+    String receivedData = Serial.readStringUntil('\n'); // 시리얼 데이터 한 줄 읽기
+    processSerialData(receivedData); // 데이터 처리
   }
-
   if (!blinkMode) {
     analogWrite(LED_RED, (currentLEDState == RED) ? brightness : 0);
     analogWrite(LED_YELLOW, (currentLEDState == YELLOW) ? brightness : 0);
     analogWrite(LED_GREEN, (currentLEDState == GREEN) ? brightness : 0);
+    if (millis() - lastSerialTime >= serialInterval) {
+      lastSerialTime = millis();
+      
+      Serial.print("LED_STATE:");
+      Serial.print("R");
+      Serial.print((currentLEDState == RED) ? "1" : "0");
+      Serial.print(":Y");
+      Serial.print((currentLEDState == YELLOW) ? "1" : "0");
+      Serial.print(":G");
+      Serial.println((currentLEDState == GREEN) ? "1" : "0");
+      Serial.print("BRIGHTNESS:");
+      Serial.println(brightness);
+    }
   }
 
   taskManager.execute();
+
+  // 🔹 500ms마다 한 번만 시리얼 출력
+  
 }
