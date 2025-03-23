@@ -46,6 +46,7 @@ void blinkLEDs();
 void onEmergencyButtonPress();
 void onBlinkButtonPress();
 void onOffButtonPress();
+void applyModeFromSerial(const String& modeStr);
 
 // TaskScheduler를 이용한 작업 관리
 Scheduler taskManager;                            // 작업 스케줄러 객체 생성
@@ -67,19 +68,12 @@ void blinkLEDs() {
   toggleState = !toggleState;                     // 상태 반전
 
   if (blinkMode) {
-    // 모든 LED를 토글 상태에 따라 켜거나 끔
     setLED(toggleState ? brightness : 0, toggleState ? brightness : 0, toggleState ? brightness : 0);
-
-    // 현재 상태를 시리얼 출력
     Serial.print("LED_STATE:");
-    Serial.print("R");
-    Serial.print(toggleState ? "1" : "0");
-    Serial.print(":Y");
-    Serial.print(toggleState ? "1" : "0");
-    Serial.print(":G");
-    Serial.println(toggleState ? "1" : "0");
-    Serial.print("BRIGHTNESS:");
-    Serial.println(brightness);
+    Serial.print("R"); Serial.print(toggleState ? "1" : "0");
+    Serial.print(":Y"); Serial.print(toggleState ? "1" : "0");
+    Serial.print(":G"); Serial.println(toggleState ? "1" : "0");
+    Serial.print("BRIGHTNESS:"); Serial.println(brightness);
   }
 }
 
@@ -89,25 +83,29 @@ void processSerialData(String data) {
     int firstColon = data.indexOf(':');
     int secondColon = data.indexOf(':', firstColon + 1);
     int thirdColon = data.indexOf(':', secondColon + 1);
-
     if (firstColon != -1 && secondColon != -1 && thirdColon != -1) {
-      // 시리얼 명령어에서 시간값 추출
       TIME_RED = data.substring(firstColon + 1, secondColon).toInt();
       TIME_YELLOW = data.substring(secondColon + 1, thirdColon).toInt();
       TIME_GREEN = data.substring(thirdColon + 1).toInt();
     }
+  } else if (data.startsWith("MODE:")) {
+    String modeStr = data.substring(5);
+    applyModeFromSerial(modeStr);
   }
 }
 
+// 시리얼로 전달된 MODE 값을 처리하여 동작 적용
+
+
 // 신호등 상태에 따른 LED 제어 로직
 void updateTrafficLights() {
-  if (emergencyMode || blinkMode || offMode) return;  // 특수 모드일 경우 무시
+  if (emergencyMode || blinkMode || offMode) return;
 
   unsigned long now = millis();
-  static unsigned long stateStartTime = millis();     // 상태 시작 시간 저장
-  static int flickerCount = 0;                        // 초록불 깜빡임 횟수 카운터
+  static unsigned long stateStartTime = millis();
+  static int flickerCount = 0;
 
-  switch (trafficState) {  //기본 사이클 구조
+  switch (trafficState) {
     case RED_BLINK:
       currentLEDState = RED;
       if (now - stateStartTime >= TIME_RED) {
@@ -154,15 +152,14 @@ void updateTrafficLights() {
   }
 }
 
-// 버튼 인터럽트 처리 및 모드 전환 함수
 void handleButtonPress(int buttonPin, volatile bool *modeFlag, LEDState ledState) {
   unsigned long now = millis();
-  if (now - lastInterruptTime < 200) return; // 디바운싱 처리 (200ms 이내 무시)
+  if (now - lastInterruptTime < 200) return;
 
-  if (digitalRead(buttonPin) == LOW) {
-    *modeFlag = !(*modeFlag); // 플래그 상태 토글
+  if (digitalRead(buttonPin) == LOW || true) { // true 추가로 시리얼 명령도 적용되게
+    *modeFlag = !(*modeFlag);
 
-    if (*modeFlag) {  // 모드 진입
+    if (*modeFlag) {
       emergencyMode = (buttonPin == BUTTON_EMERGENCY);
       blinkMode = (buttonPin == BUTTON_BLINK);
       offMode = (buttonPin == BUTTON_OFF);
@@ -171,18 +168,15 @@ void handleButtonPress(int buttonPin, volatile bool *modeFlag, LEDState ledState
         Serial.println("MODE: emergency");
         currentLEDState = RED;
         blinkTask.disable();
-      } 
-      else if (blinkMode) {
+      } else if (blinkMode) {
         Serial.println("MODE: blink");
         blinkTask.enable();
-      } 
-      else if (offMode) {
+      } else if (offMode) {
         Serial.println("MODE: OFF");
         currentLEDState = OFF;
         blinkTask.disable();
       }
-    } 
-    else { // 일반 모드 복귀
+    } else {
       Serial.println("MODE: normal");
       emergencyMode = blinkMode = offMode = false;
       blinkTask.disable();
@@ -190,73 +184,73 @@ void handleButtonPress(int buttonPin, volatile bool *modeFlag, LEDState ledState
     }
   }
 
-  lastInterruptTime = now; // 마지막 인터럽트 시간 업데이트
+  lastInterruptTime = now;
 }
-
-// 버튼별 인터럽트 콜백 등록
+void applyModeFromSerial(const String& modeStr) {
+  if (modeStr == "emergency") {
+    handleButtonPress(BUTTON_EMERGENCY, &emergencyMode, RED);
+  } else if (modeStr == "blink") {
+    handleButtonPress(BUTTON_BLINK, &blinkMode, TOGGLE);
+  } else if (modeStr == "OFF") {
+    handleButtonPress(BUTTON_OFF, &offMode, OFF);
+  } else if (modeStr == "normal") {
+    emergencyMode = blinkMode = offMode = false;
+    blinkTask.disable();
+    trafficState = RED_BLINK;
+    Serial.println("MODE: normal");
+  }
+}
 void onEmergencyButtonPress() { handleButtonPress(BUTTON_EMERGENCY, &emergencyMode, RED); }
 void onBlinkButtonPress() { handleButtonPress(BUTTON_BLINK, &blinkMode, TOGGLE); }
 void onOffButtonPress() { handleButtonPress(BUTTON_OFF, &offMode, OFF); }
 
-// 설정 초기화 함수
 void setup() {
-  Serial.begin(9600);                            // 시리얼 통신 시작
+  Serial.begin(9600);
 
-  // LED 핀 출력 설정
   pinMode(LED_RED, OUTPUT);
   pinMode(LED_YELLOW, OUTPUT);
   pinMode(LED_GREEN, OUTPUT);
 
-  // 버튼 핀 입력 풀업 설정
   pinMode(BUTTON_EMERGENCY, INPUT_PULLUP);
   pinMode(BUTTON_BLINK, INPUT_PULLUP);
   pinMode(BUTTON_OFF, INPUT_PULLUP);
 
-  // 버튼 인터럽트 핸들러 연결
   attachPCINT(digitalPinToPCINT(BUTTON_EMERGENCY), onEmergencyButtonPress, CHANGE);
   attachPCINT(digitalPinToPCINT(BUTTON_BLINK), onBlinkButtonPress, CHANGE);
   attachPCINT(digitalPinToPCINT(BUTTON_OFF), onOffButtonPress, CHANGE);
 
-  // TaskScheduler 초기화 및 작업 추가
   taskManager.init();
   taskManager.addTask(taskTrafficUpdate);
   taskManager.addTask(blinkTask);
   taskTrafficUpdate.enable();
 }
 
-unsigned long lastSerialTime = 0;                  // 마지막 시리얼 출력 시간 저장 변수
-const unsigned long serialInterval = 100;          // 시리얼 출력 간격 (100ms)
+unsigned long lastSerialTime = 0;
+const unsigned long serialInterval = 100;
 
-// 메인 루프 함수
 void loop() {
-  int potVal = analogRead(POTENTIOMETER);          // 포텐셔미터 값 읽기
-  int brightness = map(potVal, 0, 1023, 0, 255);    // 밝기 값으로 변환
+  int potVal = analogRead(POTENTIOMETER);
+  int brightness = map(potVal, 0, 1023, 0, 255);
 
   if (Serial.available()) {
-    String receivedData = Serial.readStringUntil('\n');  // 시리얼 데이터 읽기
-    processSerialData(receivedData);                      // 데이터 처리
+    String receivedData = Serial.readStringUntil('\n');
+    processSerialData(receivedData);
   }
 
-  if (!blinkMode) { // 깜빡 모드가 아닐 때만 수동 LED 점등
+  if (!blinkMode) {
     analogWrite(LED_RED, (currentLEDState == RED) ? brightness : 0);
     analogWrite(LED_YELLOW, (currentLEDState == YELLOW) ? brightness : 0);
     analogWrite(LED_GREEN, (currentLEDState == GREEN) ? brightness : 0);
 
     if (millis() - lastSerialTime >= serialInterval) {
       lastSerialTime = millis();
-
-      // 현재 LED 상태 및 밝기를 시리얼 출력
       Serial.print("LED_STATE:");
-      Serial.print("R");
-      Serial.print((currentLEDState == RED) ? "1" : "0");
-      Serial.print(":Y");
-      Serial.print((currentLEDState == YELLOW) ? "1" : "0");
-      Serial.print(":G");
-      Serial.println((currentLEDState == GREEN) ? "1" : "0");
-      Serial.print("BRIGHTNESS:");
-      Serial.println(brightness);
+      Serial.print("R"); Serial.print((currentLEDState == RED) ? "1" : "0");
+      Serial.print(":Y"); Serial.print((currentLEDState == YELLOW) ? "1" : "0");
+      Serial.print(":G"); Serial.println((currentLEDState == GREEN) ? "1" : "0");
+      Serial.print("BRIGHTNESS:"); Serial.println(brightness);
     }
   }
 
-  taskManager.execute();  // TaskScheduler 실행
+  taskManager.execute();
 }
