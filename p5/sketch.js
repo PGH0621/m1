@@ -1,9 +1,7 @@
-// 시리얼 통신 설정 변수
 let port;
 let isPortOpen = false;
 let receivedBuffer = "";
 
-// 신호등 상태 관련 변수
 let mode = "normal";
 let brightness = 255;
 let redTime = 2000, yellowTime = 500, greenTime = 2000;
@@ -11,15 +9,12 @@ let currentColor = "off";
 let currentColor2 = "off";
 let currentColor3 = "off";
 
-// 슬라이더 객체들
 let redSlider, yellowSlider, greenSlider;
 
-// 손 인식 관련 변수
 let handposeModel;
 let video;
 let hands = [];
 
-// 현재 모드 및 타이머
 let currentHandMode = "NORMAL";
 let lastModeSendTime = 0;
 let lastSliderUpdateTime = 0;
@@ -28,24 +23,21 @@ function setup() {
   createCanvas(800, 600);
   background(240);
 
-  // 비디오 캡처 시작
   video = createCapture(VIDEO);
   video.size(640, 480);
   video.hide();
 
-  // 손 포즈 모델 로딩
   handposeModel = ml5.handpose(video, () => {
     console.log("🖐️ Handpose model loaded!");
   });
 
-  // 예측 결과 저장
   handposeModel.on("predict", results => {
     hands = results;
   });
 
-  // 시리얼 포트 열기
   port = createSerial();
   let usedPorts = usedSerialPorts();
+
   if (usedPorts.length > 0) {
     port.open(usedPorts[0], 9600);
     console.log("🔗 Connected to:", usedPorts[0]);
@@ -54,7 +46,6 @@ function setup() {
     console.log("❌ No available serial ports.");
   }
 
-  // 슬라이더 생성 및 이벤트 연결
   redSlider = createSlider(500, 5000, redTime, 500);
   redSlider.position(50, 350);
   redSlider.input(updateRedTime);
@@ -73,17 +64,15 @@ function setup() {
 function draw() {
   background(240);
 
-  // 비디오 화면 출력 (좌우 반전)
   push();
-  translate(800, 0);
+  translate(480 + 320, 0);
   scale(-1, 1);
   image(video, 0, 0, 320, 240);
   pop();
 
-  // 주요 기능들 실행
-  drawHandPoints();
-  detectGestureAndSendMode(); 
-  drawSendTimerCircles();
+  drawHandPoints(); //추가
+  detectGestureAndSendMode(); //추가 
+  drawSendTimerCircles();  //추가
   readSerialData();
   drawIndicators();
   drawColorCircle();
@@ -91,13 +80,14 @@ function draw() {
   drawSliders();
 }
 
-// 손가락 위치 점 출력
-function drawHandPoints() {
-  for (let hand of hands) {
-    for (let [x, y] of hand.landmarks) {
+function drawHandPoints() { // 손 인식 마커수찍어주는 함수
+  for (let i = 0; i < hands.length; i++) {
+    let hand = hands[i];
+    for (let j = 0; j < hand.landmarks.length; j++) {
+      let [x, y] = hand.landmarks[j];
       let scaledX = map(x, 0, 640, 0, 320);
       let scaledY = map(y, 0, 480, 0, 240);
-      let flippedX = 800 - scaledX;
+      let flippedX = 480 + (320 - scaledX);
       fill(255, 255, 0);
       noStroke();
       circle(flippedX, scaledY, 5);
@@ -105,31 +95,28 @@ function drawHandPoints() {
   }
 }
 
-// 손 제스처에 따라 모드 변경
-function detectGestureAndSendMode() {
+function detectGestureAndSendMode() { // 제스쳐에 따른 모드 변화수함수
   const now = millis();
   if (hands.length === 0 || !isPortOpen) return;
 
   let detectedModes = [];
 
-  for (let hand of hands) {
-    let lm = hand.landmarks;
+  for (let i = 0; i < hands.length; i++) {
+    let lm = hands[i].landmarks;
 
     function isFingerUp(tip, pip, margin = 15) {
       return lm[tip][1] < lm[pip][1] - margin;
     }
 
-    // 각 손가락이 펴졌는지 확인
-    let isThumbUp = isFingerUp(4, 3);
-    let isIndexUp = isFingerUp(8, 6);
-    let isMiddleUp = isFingerUp(12, 10);
-    let isRingUp = isFingerUp(16, 14);
-    let isPinkyUp = isFingerUp(20, 18);
+    let isThumbUp = isFingerUp(4, 3); //엄지
+    let isIndexUp = isFingerUp(8, 6); //검지
+    let isMiddleUp = isFingerUp(12, 10); //중지
+    let isRingUp = isFingerUp(16, 14); //약지
+    let isPinkyUp = isFingerUp(20, 18); //
 
-    // 슬라이더 값 조정 제스처 처리
     handleSliderGestures(isIndexUp, isMiddleUp, isRingUp, isPinkyUp, isThumbUp, now);
 
-    // 모드 제스처 인식
+    // 모드 제스처 판단
     if (isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && !isThumbUp) {
       detectedModes.push("touch-select");
     } else if (isIndexUp && !isMiddleUp && !isRingUp && !isPinkyUp && !isThumbUp) {
@@ -143,7 +130,6 @@ function detectGestureAndSendMode() {
     }
   }
 
-  // 우선순위에 따라 모드 전송
   const priority = ["touch-select", "emergency", "blink", "OFF", "normal"];
   for (let mode of priority) {
     if (detectedModes.includes(mode)) {
@@ -158,50 +144,55 @@ function detectGestureAndSendMode() {
   }
 }
 
-// 손 제스처로 슬라이더 값 조정
 function handleSliderGestures(isIndexUp, isMiddleUp, isRingUp, isPinkyUp, isThumbUp, now) {
   if (now - lastSliderUpdateTime < 1000) return;
 
-  // 증가 제스처
-  if (isIndexUp && isMiddleUp && isRingUp && !isPinkyUp && !isThumbUp) {
+  if (isIndexUp && isMiddleUp && isRingUp && !isPinkyUp && !isThumbUp) { //
     redTime = constrain(redTime + 100, 500, 5000);
     redSlider.value(redTime);
-  } else if (isIndexUp && isMiddleUp && !isRingUp && isPinkyUp && !isThumbUp) {
-    yellowTime = constrain(yellowTime + 100, 500, 5000);
-    yellowSlider.value(yellowTime);
-  } else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && !isThumbUp) {
-    greenTime = constrain(greenTime + 100, 500, 5000);
-    greenSlider.value(greenTime);
-  }
-
-  // 감소 제스처
-  else if (isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp && isThumbUp) {
+    sendTrafficLightSettings();
+    lastSliderUpdateTime = now;
+  } else if (isIndexUp && isMiddleUp && !isRingUp && !isPinkyUp && isThumbUp) { //빨강 시간 감소
     redTime = constrain(redTime - 100, 500, 5000);
     redSlider.value(redTime);
-  } else if (isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && isThumbUp) {
+    sendTrafficLightSettings();
+    lastSliderUpdateTime = now;
+  } else if (isIndexUp && isMiddleUp && !isRingUp && isPinkyUp && !isThumbUp) { //노랑 시간 증가
+    yellowTime = constrain(yellowTime + 100, 500, 5000);
+    yellowSlider.value(yellowTime);
+    sendTrafficLightSettings();
+    lastSliderUpdateTime = now;
+  } 
+  else if (isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && isThumbUp) {// 노랑 시간 감소
     yellowTime = constrain(yellowTime - 100, 500, 5000);
     yellowSlider.value(yellowTime);
-  } else if (!isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && isThumbUp) {
+    sendTrafficLightSettings();
+    lastSliderUpdateTime = now;
+  } else if (isIndexUp && isMiddleUp && isRingUp && isPinkyUp && !isThumbUp) {//초록 시간 증가
+    greenTime = constrain(greenTime + 100, 500, 5000);
+    greenSlider.value(greenTime);
+    sendTrafficLightSettings();
+    lastSliderUpdateTime = now;
+  }else if (!isIndexUp && !isMiddleUp && !isRingUp && isPinkyUp && isThumbUp) { //초록 시간 감소
     greenTime = constrain(greenTime - 100, 500, 5000);
     greenSlider.value(greenTime);
-  }
-
-  // 시리얼 전송 및 시간 갱신
-  sendTrafficLightSettings();
-  lastSliderUpdateTime = now;
+    sendTrafficLightSettings();
+    lastSliderUpdateTime = now;
+  } 
 }
 
-// 모드 변경 타이머 시각화
-function drawSendTimerCircles() {
+function drawSendTimerCircles() { // 3초 타이머 동그라미 함수
   const now = millis();
   const maxDelay = 3000;
   const radiusMax = 40;
 
-  for (let hand of hands) {
-    let [x, y] = hand.landmarks[0];
+  for (let i = 0; i < hands.length; i++) { // 손 바로 밑에 위치하게 함
+    let lm = hands[i].landmarks;
+    let x = lm[0][0];
+    let y = lm[0][1];
     let scaledX = map(x, 0, 640, 0, 320);
     let scaledY = map(y, 0, 480, 0, 240);
-    let flippedX = 800 - scaledX;
+    let flippedX = 480 + (320 - scaledX);
     let elapsed = constrain(now - lastModeSendTime, 0, maxDelay);
     let radius = map(elapsed, 0, maxDelay, 5, radiusMax);
 
@@ -211,7 +202,6 @@ function drawSendTimerCircles() {
   }
 }
 
-// 시리얼 수신 처리
 function readSerialData() {
   if (isPortOpen && port.available()) {
     let incomingData = port.read();
@@ -227,7 +217,6 @@ function readSerialData() {
   }
 }
 
-// 수신 데이터 처리
 function processSerialData(data) {
   if (data.startsWith("MODE:")) {
     mode = data.substring(5);
@@ -246,9 +235,9 @@ function processSerialData(data) {
       console.log("LED State Updated:", currentColor, currentColor2, currentColor3);
     }
   }
+  console.log("Brightness:", brightness);
 }
 
-// 모드 표시
 function drawIndicators() {
   fill(255);
   noStroke();
@@ -258,7 +247,6 @@ function drawIndicators() {
   text("Mode: " + mode, 150, 300);
 }
 
-// 밝기 게이지
 function drawBrightnessGauge() {
   fill(200);
   rect(50, 200, 300, 30, 10);
@@ -270,15 +258,17 @@ function drawBrightnessGauge() {
   text(brightness, brightness + 70, 180);
 }
 
-// 색상 상태 원
 function drawColorCircle() {
-  fill(currentColor === "R1" ? "red" : 200);
+  if (currentColor === "R1") fill("red");
+  else fill(200);
   circle(100, 100, 80);
 
-  fill(currentColor2 === "Y1" ? "yellow" : 200);
+  if (currentColor2 === "Y1") fill("yellow");
+  else fill(200);
   circle(250, 100, 80);
 
-  fill(currentColor3 === "G1" ? "green" : 200);
+  if (currentColor3 === "G1") fill("green");
+  else fill(200);
   circle(400, 100, 80);
 
   fill(0);
@@ -289,7 +279,6 @@ function drawColorCircle() {
   text("G", 400, 100);
 }
 
-// 슬라이더 값 표시
 function drawSliders() {
   fill(0);
   textSize(14);
@@ -298,21 +287,21 @@ function drawSliders() {
   text("Green Time: " + greenTime + " ms", 100, 405);
 }
 
-// 슬라이더 조작 함수
 function updateRedTime() {
   redTime = redSlider.value();
   sendTrafficLightSettings();
 }
+
 function updateYellowTime() {
   yellowTime = yellowSlider.value();
   sendTrafficLightSettings();
 }
+
 function updateGreenTime() {
   greenTime = greenSlider.value();
   sendTrafficLightSettings();
 }
 
-// 시리얼로 시간 전송
 function sendTrafficLightSettings() {
   if (isPortOpen) {
     let message = `TRAFFIC_LIGHT:${redTime}:${yellowTime}:${greenTime}`;
