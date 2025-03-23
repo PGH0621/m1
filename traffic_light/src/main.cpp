@@ -186,7 +186,7 @@ void handleButtonPress(int buttonPin, volatile bool *modeFlag, LEDState ledState
 
   lastInterruptTime = now;
 }
-void applyModeFromSerial(const String& modeStr) {
+void applyModeFromSerial(const String& modeStr) { // p5.js에서 특수모드에 대한 값 받아서 적용
   if (modeStr == "emergency") {
     handleButtonPress(BUTTON_EMERGENCY, &emergencyMode, RED);
   } else if (modeStr == "blink") {
